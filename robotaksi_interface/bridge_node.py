@@ -1,9 +1,9 @@
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist, TransformStamped, Quaternion
-from nav_msgs.msg import Odometry
+# from nav_msgs.msg import Odometry
 from std_msgs.msg import String
-from tf2_ros import TransformBroadcaster
+# from tf2_ros import TransformBroadcaster
 import os
 import yaml
 from ament_index_python.packages import get_package_share_directory
@@ -94,8 +94,8 @@ class BridgeNode(Node):
         self.last_time = self.get_clock().now()
 
         # Publishers
-        self.odom_pub = self.create_publisher(Odometry, 'odom', 10)
-        self.tf_broadcaster = TransformBroadcaster(self)
+        # self.odom_pub = self.create_publisher(Odometry, 'odom', 10)
+        # self.tf_broadcaster = TransformBroadcaster(self)
 
         # Serial port kurulumu (Bağlı olan ilk cihazı bul)
         self.ser = None
