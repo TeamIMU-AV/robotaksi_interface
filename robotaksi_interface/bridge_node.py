@@ -233,45 +233,45 @@ class BridgeNode(Node):
             payload = decoded[1:-1]
             speed, total_pulses, t_speed, t_percent, current_angle = struct.unpack('<fIffb', payload)
             self.get_logger().info(f"Telemetry: Speed={speed:.2f} m/s, TgtSpd={t_speed:.2f} m/s, Steer={current_angle} deg")
-            now = self.get_clock().now()
-            dt = (now - self.last_time).nanoseconds / 1e9
-            self.last_time = now
+            # now = self.get_clock().now()
+            # dt = (now - self.last_time).nanoseconds / 1e9
+            # self.last_time = now
 
-            if dt > 0 and dt < 1.0:
-                # Forward kinematics using Bicycle model
-                # omega = v * tan(delta) / L
-                omega = speed * math.tan(self.current_steer_rad) / self.L
+            # if dt > 0 and dt < 1.0:
+            #     # Forward kinematics using Bicycle model
+            #     # omega = v * tan(delta) / L
+            #     omega = speed * math.tan(self.current_steer_rad) / self.L
                 
-                self.theta += omega * dt
-                self.x += speed * math.cos(self.theta) * dt
-                self.y += speed * math.sin(self.theta) * dt
+            #     self.theta += omega * dt
+            #     self.x += speed * math.cos(self.theta) * dt
+            #     self.y += speed * math.sin(self.theta) * dt
                 
-                # Create quaternion from theta (yaw)
-                q = quaternion_from_euler(0, 0, self.theta)
+            #     # Create quaternion from theta (yaw)
+            #     q = quaternion_from_euler(0, 0, self.theta)
                 
-                # Broadcast TF
-                t = TransformStamped()
-                t.header.stamp = now.to_msg()
-                t.header.frame_id = 'odom'
-                t.child_frame_id = 'base_link'
-                t.transform.translation.x = self.x
-                t.transform.translation.y = self.y
-                t.transform.translation.z = 0.0
-                t.transform.rotation = q
-                self.tf_broadcaster.sendTransform(t)
+            #     # Broadcast TF
+            #     t = TransformStamped()
+            #     t.header.stamp = now.to_msg()
+            #     t.header.frame_id = 'odom'
+            #     t.child_frame_id = 'base_link'
+            #     t.transform.translation.x = self.x
+            #     t.transform.translation.y = self.y
+            #     t.transform.translation.z = 0.0
+            #     t.transform.rotation = q
+            #     self.tf_broadcaster.sendTransform(t)
                 
-                # Publish Odometry message
-                odom = Odometry()
-                odom.header.stamp = now.to_msg()
-                odom.header.frame_id = 'odom'
-                odom.child_frame_id = 'base_link'
-                odom.pose.pose.position.x = self.x
-                odom.pose.pose.position.y = self.y
-                odom.pose.pose.position.z = 0.0
-                odom.pose.pose.orientation = q
-                odom.twist.twist.linear.x = speed
-                odom.twist.twist.angular.z = omega
-                self.odom_pub.publish(odom)
+            #     # Publish Odometry message
+            #     odom = Odometry()
+            #     odom.header.stamp = now.to_msg()
+            #     odom.header.frame_id = 'odom'
+            #     odom.child_frame_id = 'base_link'
+            #     odom.pose.pose.position.x = self.x
+            #     odom.pose.pose.position.y = self.y
+            #     odom.pose.pose.position.z = 0.0
+            #     odom.pose.pose.orientation = q
+            #     odom.twist.twist.linear.x = speed
+            #     odom.twist.twist.angular.z = omega
+            #     self.odom_pub.publish(odom)
 
 def main(args=None):
     rclpy.init(args=args)
