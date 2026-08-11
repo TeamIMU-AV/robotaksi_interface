@@ -13,6 +13,7 @@ bridge_node:
     track_width_m: 1.26        # İz genişliği (T): 126 cm. DİKKAT: Odometri hesaplamalarında dönüş ekseni arka aks olduğu için bilinçli olarak 'Arka İz Genişliği' kullanılmıştır (Ön taraf 154 cm'dir).
     max_steer_angle_deg: 30.0  # Maksimum direksiyon dönüş açısı: Sola 30 derece, Sağa 30 derece (Toplam 60 derece aralık)
     max_steer_speed_deg_s: 10.0 # Maksimum direksiyon dönüş hızı (deg/s). Donanımsal ~5kHz sürücü sınırı.
+    publish_tf: false          # Wheel odometry stays as a topic; localization owns the odom->base transform.
 
 joystick_teleop:
   ros__parameters:

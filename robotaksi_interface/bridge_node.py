@@ -1,9 +1,9 @@
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist, TransformStamped, Quaternion
-# from nav_msgs.msg import Odometry
+from nav_msgs.msg import Odometry
 from std_msgs.msg import String
-# from tf2_ros import TransformBroadcaster
+from tf2_ros import TransformBroadcaster
 import os
 import yaml
 from ament_index_python.packages import get_package_share_directory
@@ -46,12 +46,14 @@ class BridgeNode(Node):
         self.declare_parameter('track_width_m', 1.2)
         self.declare_parameter('max_steer_angle_deg', 35.0)
         self.declare_parameter('max_steer_speed_deg_s', 20.0)
+        self.declare_parameter('publish_tf', False)
 
         self.serial_paths = self.get_parameter('serial_paths').value
         self.baud = self.get_parameter('baud_rate').value
         self.L = self.get_parameter('wheelbase_m').value
         self.max_steer = self.get_parameter('max_steer_angle_deg').value
         self.max_steer_speed = self.get_parameter('max_steer_speed_deg_s').value
+        self.publish_tf = self.get_parameter('publish_tf').value
 
         try:
             pkg_share = get_package_share_directory('robotaksi_interface')
@@ -70,6 +72,8 @@ class BridgeNode(Node):
                         self.max_steer = bridge_params['max_steer_angle_deg']
                     if 'max_steer_speed_deg_s' in bridge_params and self.max_steer_speed == 20.0:
                         self.max_steer_speed = bridge_params['max_steer_speed_deg_s']
+                    if 'publish_tf' in bridge_params:
+                        self.publish_tf = bridge_params['publish_tf']
         except Exception as e:
             self.get_logger().warn(f"Could not load fallback config: {e}")
 
@@ -94,8 +98,8 @@ class BridgeNode(Node):
         self.last_time = self.get_clock().now()
 
         # Publishers
-        # self.odom_pub = self.create_publisher(Odometry, 'odom', 10)
-        # self.tf_broadcaster = TransformBroadcaster(self)
+        self.odom_pub = self.create_publisher(Odometry, 'odom', 10)
+        self.tf_broadcaster = TransformBroadcaster(self) if self.publish_tf else None
 
         # Serial port kurulumu (Bağlı olan ilk cihazı bul)
         self.ser = None
@@ -233,45 +237,46 @@ class BridgeNode(Node):
             payload = decoded[1:-1]
             speed, total_pulses, t_speed, t_percent, current_angle = struct.unpack('<fIffb', payload)
             self.get_logger().info(f"Telemetry: Speed={speed:.2f} m/s, TgtSpd={t_speed:.2f} m/s, Steer={current_angle} deg")
-            # now = self.get_clock().now()
-            # dt = (now - self.last_time).nanoseconds / 1e9
-            # self.last_time = now
+            now = self.get_clock().now()
+            dt = (now - self.last_time).nanoseconds / 1e9
+            self.last_time = now
 
-            # if dt > 0 and dt < 1.0:
-            #     # Forward kinematics using Bicycle model
-            #     # omega = v * tan(delta) / L
-            #     omega = speed * math.tan(self.current_steer_rad) / self.L
+            if dt > 0 and dt < 1.0:
+                # Forward kinematics using Bicycle model
+                # omega = v * tan(delta) / L
+                omega = speed * math.tan(self.current_steer_rad) / self.L
                 
-            #     self.theta += omega * dt
-            #     self.x += speed * math.cos(self.theta) * dt
-            #     self.y += speed * math.sin(self.theta) * dt
+                self.theta += omega * dt
+                self.x += speed * math.cos(self.theta) * dt
+                self.y += speed * math.sin(self.theta) * dt
                 
-            #     # Create quaternion from theta (yaw)
-            #     q = quaternion_from_euler(0, 0, self.theta)
+                # Create quaternion from theta (yaw)
+                q = quaternion_from_euler(0, 0, self.theta)
                 
-            #     # Broadcast TF
-            #     t = TransformStamped()
-            #     t.header.stamp = now.to_msg()
-            #     t.header.frame_id = 'odom'
-            #     t.child_frame_id = 'base_link'
-            #     t.transform.translation.x = self.x
-            #     t.transform.translation.y = self.y
-            #     t.transform.translation.z = 0.0
-            #     t.transform.rotation = q
-            #     self.tf_broadcaster.sendTransform(t)
+                if self.publish_tf:
+                    # Broadcast TF only when explicitly enabled. Localization owns odom->base.
+                    t = TransformStamped()
+                    t.header.stamp = now.to_msg()
+                    t.header.frame_id = 'odom'
+                    t.child_frame_id = 'base_link'
+                    t.transform.translation.x = self.x
+                    t.transform.translation.y = self.y
+                    t.transform.translation.z = 0.0
+                    t.transform.rotation = q
+                    self.tf_broadcaster.sendTransform(t)
                 
-            #     # Publish Odometry message
-            #     odom = Odometry()
-            #     odom.header.stamp = now.to_msg()
-            #     odom.header.frame_id = 'odom'
-            #     odom.child_frame_id = 'base_link'
-            #     odom.pose.pose.position.x = self.x
-            #     odom.pose.pose.position.y = self.y
-            #     odom.pose.pose.position.z = 0.0
-            #     odom.pose.pose.orientation = q
-            #     odom.twist.twist.linear.x = speed
-            #     odom.twist.twist.angular.z = omega
-            #     self.odom_pub.publish(odom)
+                # Publish Odometry message
+                odom = Odometry()
+                odom.header.stamp = now.to_msg()
+                odom.header.frame_id = 'odom'
+                odom.child_frame_id = 'base_link'
+                odom.pose.pose.position.x = self.x
+                odom.pose.pose.position.y = self.y
+                odom.pose.pose.position.z = 0.0
+                odom.pose.pose.orientation = q
+                odom.twist.twist.linear.x = speed
+                odom.twist.twist.angular.z = omega
+                self.odom_pub.publish(odom)
 
 def main(args=None):
     rclpy.init(args=args)
