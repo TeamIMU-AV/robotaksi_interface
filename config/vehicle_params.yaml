@@ -11,7 +11,7 @@ bridge_node:
     # Kinematics Parameters (Gerekli Fiziksel Ölçüler)
     wheelbase_m: 2.28          # Dingil mesafesi (L): 228 cm (2280 mm). Ön ve arka akslar arası uzaklık.
     track_width_m: 1.26        # İz genişliği (T): 126 cm. DİKKAT: Odometri hesaplamalarında dönüş ekseni arka aks olduğu için bilinçli olarak 'Arka İz Genişliği' kullanılmıştır (Ön taraf 154 cm'dir).
-    max_steer_angle_deg: 27.0  # Maksimum direksiyon dönüş açısı: Sola 30 derece, Sağa 30 derece (Toplam 60 derece aralık)
+    max_steer_angle_deg: 27.0  # Maksimum direksiyon dönüş açısı: sola 27, sağa 27 derece. 2026-08-12 havuz oturumunda araçta çalışan değer. Zincirin tek kaynağı: cmd_vel_mux ve nav2 R_min bununla tutarlı kalmalı (2.28/tan27 = 4.48 m).
     max_steer_speed_deg_s: 10.0 # Maksimum direksiyon dönüş hızı (deg/s). Donanımsal ~5kHz sürücü sınırı.
     publish_tf: false          # Wheel odometry stays as a topic; localization owns the odom->base transform.
 
