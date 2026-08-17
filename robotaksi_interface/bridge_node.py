@@ -47,6 +47,17 @@ class BridgeNode(Node):
         self.declare_parameter('max_steer_angle_deg', 35.0)
         self.declare_parameter('max_steer_speed_deg_s', 20.0)
         self.declare_parameter('publish_tf', False)
+        # Diagonal of the Odometry covariance, [x, y, z, roll, pitch, yaw].
+        # Pose is loose because this pose is dead-reckoned and drifts without
+        # bound; the unused axes (z, roll, pitch) are large so nothing is
+        # tempted to fuse them out of a planar model.
+        self.declare_parameter(
+            'pose_covariance_diagonal', [0.5, 0.5, 1e6, 1e6, 1e6, 0.2])
+        # Twist is the trustworthy half: linear.x comes from the wheel speed
+        # measurement. 0.01 m^2/s^2 is one sigma of 0.1 m/s, which matches the
+        # Xsens /odometry twist covariance already in use.
+        self.declare_parameter(
+            'twist_covariance_diagonal', [0.01, 1e6, 1e6, 1e6, 1e6, 0.05])
 
         self.serial_paths = self.get_parameter('serial_paths').value
         self.baud = self.get_parameter('baud_rate').value
@@ -54,6 +65,10 @@ class BridgeNode(Node):
         self.max_steer = self.get_parameter('max_steer_angle_deg').value
         self.max_steer_speed = self.get_parameter('max_steer_speed_deg_s').value
         self.publish_tf = self.get_parameter('publish_tf').value
+        self.pose_covariance_diagonal = list(
+            self.get_parameter('pose_covariance_diagonal').value)
+        self.twist_covariance_diagonal = list(
+            self.get_parameter('twist_covariance_diagonal').value)
 
         try:
             pkg_share = get_package_share_directory('robotaksi_interface')
@@ -276,6 +291,22 @@ class BridgeNode(Node):
                 odom.pose.pose.orientation = q
                 odom.twist.twist.linear.x = speed
                 odom.twist.twist.angular.z = omega
+                # Covariance was left at all zeros. robot_localization reads a
+                # zero variance as infinite confidence, so the EKF trusted this
+                # dead-reckoned pose absolutely and became ill-conditioned.
+                # Filled from parameters so it can be tuned on the vehicle.
+                #
+                # Pose is deliberately loose: x and y here are an unbounded
+                # integration of wheel speed and steering angle, so their real
+                # uncertainty grows with distance and no fixed number is
+                # honest. The EKF is configured to fuse only twist.linear.x
+                # from this message (see ekf.yaml odom0_config), which is the
+                # part wheel odometry actually measures; the pose values ride
+                # along for anything else that subscribes.
+                for i, var in enumerate(self.pose_covariance_diagonal):
+                    odom.pose.covariance[i * 7] = var
+                for i, var in enumerate(self.twist_covariance_diagonal):
+                    odom.twist.covariance[i * 7] = var
                 self.odom_pub.publish(odom)
 
 def main(args=None):
