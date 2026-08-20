@@ -253,7 +253,34 @@ class BridgeNode(Node):
 
             payload = decoded[1:-1]
             speed, total_pulses, t_speed, t_percent, current_angle = struct.unpack('<fIffb', payload)
-            self.get_logger().info(f"Telemetry: Speed={speed:.2f} m/s, TgtSpd={t_speed:.2f} m/s, Steer={current_angle} deg")
+            # total_pulses ve t_percent 2026-08-18'e kadar cozulup atiliyordu.
+            # Loga eklendiler cunku "speed alani neden yanlis" sorusunu KARTA
+            # DOKUNMADAN ancak bunlar ayirt ediyor:
+            #
+            #   arac dururken pulses ARTIYOR   -> enkoder girisi hayalet darbe
+            #                                     sayiyor; speed durust bir
+            #                                     hesap, girdisi yalan.
+            #   pulses SABIT ama speed != 0    -> speed enkoderden turemiyor
+            #                                     ya da kartin dt matematigi
+            #                                     bozuk.
+            #   surerken pulses dogru artiyor  -> enkoder saglam, kusur yalniz
+            #     ama speed takip etmiyor        speed hesabinda.
+            #
+            # Olculen sorun (20260818_090751 kaydi): arac park halinde ve
+            # DISARMED iken speed 10.79 m/s'ye kadar cikti; gercek hiza karsi
+            # regresyon egimi 0.017, korelasyon 0.006 -- yani alan hizi hic
+            # olcmuyor. CRC-Maxim her pakette dogrulaniyor ve <fIffb tam 17
+            # bayta oturuyor, dolayisiyla bayt bozulmasi/hizalama kaymasi
+            # elendi; geriye kartin o alana ne yazdigi kaliyor. Bu yuzden
+            # /odom/wheel EKF'e girmiyor -- bkz. robotaksi_localization.yaml.
+            #
+            # speed 2 yerine 4 ondalikla basiliyor: 2 ondalikta degerler
+            # 0.01'lik adimlara yapisiyor ve alttaki hesabin kuantali olup
+            # olmadigi (periyot tabanli mi, sayac tabanli mi) gorulemiyor.
+            self.get_logger().info(
+                f"Telemetry: Speed={speed:.4f} m/s, TgtSpd={t_speed:.2f} m/s, "
+                f"Steer={current_angle} deg, Pulses={total_pulses}, "
+                f"Thr={t_percent:.2f}")
             now = self.get_clock().now()
             dt = (now - self.last_time).nanoseconds / 1e9
             self.last_time = now
