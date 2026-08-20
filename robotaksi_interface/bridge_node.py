@@ -4,15 +4,46 @@ from geometry_msgs.msg import Twist, TransformStamped, Quaternion
 from nav_msgs.msg import Odometry
 from std_msgs.msg import String
 from tf2_ros import TransformBroadcaster
+from rclpy.parameter import Parameter
 import os
-import yaml
-from ament_index_python.packages import get_package_share_directory
 import math
 import struct
 import threading
 import serial
 from cobs import cobs
 import crcmod.predefined
+
+# Tipli, varsayilansiz parametreler. Degerlerin tek tanimi
+# robotaksi_interface/config/robotaksi_interface.yaml; arac olculeri
+# (wheelbase_m, track_width_m, max_steer_*) robotaksi_bringup'in
+# vehicle_params.yaml'inda, cunku cmd_vel_mux ve joystick_teleop ayni sayilari
+# okumak zorunda.
+REQUIRED_PARAMETERS = {
+    'serial_paths': Parameter.Type.STRING_ARRAY,
+    'serial_fallback_paths': Parameter.Type.STRING_ARRAY,
+    'baud_rate': Parameter.Type.INTEGER,
+    'publish_tf': Parameter.Type.BOOL,
+    'odom_frame': Parameter.Type.STRING,
+    'base_frame': Parameter.Type.STRING,
+    'wheelbase_m': Parameter.Type.DOUBLE,
+    'track_width_m': Parameter.Type.DOUBLE,
+    'max_steer_angle_deg': Parameter.Type.DOUBLE,
+    'max_steer_speed_deg_s': Parameter.Type.DOUBLE,
+    'pose_covariance_diagonal': Parameter.Type.DOUBLE_ARRAY,
+    'twist_covariance_diagonal': Parameter.Type.DOUBLE_ARRAY,
+}
+
+
+def get_required_parameter(node, name):
+    parameter = node.get_parameter(name)
+    if parameter.type_ == Parameter.Type.NOT_SET:
+        raise RuntimeError(
+            f"Required ROS parameter '{name}' is missing. It is defined in "
+            f"robotaksi_interface/config/robotaksi_interface.yaml or "
+            f"robotaksi_bringup/config/vehicle_params.yaml; launch this node "
+            f"through robotaksi_interface.launch.py.")
+    return parameter.value
+
 
 def quaternion_from_euler(ai, aj, ak):
     ai /= 2.0
@@ -39,68 +70,39 @@ class BridgeNode(Node):
     def __init__(self):
         super().__init__('bridge_node')
 
-        # Parametreleri tanımla
-        self.declare_parameter('serial_paths', ['/dev/ttyACM0'])
-        self.declare_parameter('baud_rate', 1000000)
-        self.declare_parameter('wheelbase_m', 1.5)
-        self.declare_parameter('track_width_m', 1.2)
-        self.declare_parameter('max_steer_angle_deg', 35.0)
-        self.declare_parameter('max_steer_speed_deg_s', 20.0)
-        self.declare_parameter('publish_tf', False)
-        # Diagonal of the Odometry covariance, [x, y, z, roll, pitch, yaw].
-        # Pose is loose because this pose is dead-reckoned and drifts without
-        # bound; the unused axes (z, roll, pitch) are large so nothing is
-        # tempted to fuse them out of a planar model.
-        self.declare_parameter(
-            'pose_covariance_diagonal', [0.5, 0.5, 1e6, 1e6, 1e6, 0.2])
-        # Twist is the trustworthy half: linear.x comes from the wheel speed
-        # measurement. 0.01 m^2/s^2 is one sigma of 0.1 m/s, which matches the
-        # Xsens /odometry twist covariance already in use.
-        self.declare_parameter(
-            'twist_covariance_diagonal', [0.01, 1e6, 1e6, 1e6, 1e6, 0.05])
+        # Parametreleri tanımla. Hepsi TIPLI ve VARSAYILANSIZ: degerlerin tek
+        # tanimi robotaksi_interface/config/robotaksi_interface.yaml (ve arac
+        # olculeri icin robotaksi_bringup/config/vehicle_params.yaml). Eksik
+        # bir anahtar acilista parametre adiyla hata verir.
+        #
+        # Burada eskiden iki katmanli bir varsayilan zinciri vardi: kodda
+        # yazili degerler (wheelbase 1.5, max_steer 35.0) ve arkasindan
+        # vehicle_params.yaml'i ELLE okuyup "deger hala kodun varsayilanina
+        # esitse" uzerine yazan bir blok. Bunun sonucu, YAML'da bir anahtar
+        # yeniden adlandirildiginda ya da parametre kod varsayilaniyla ayni
+        # sayiya ayarlandiginda dugumun sessizce yanlis olcuyle calismasiydi.
+        for parameter_name, parameter_type in REQUIRED_PARAMETERS.items():
+            self.declare_parameter(parameter_name, parameter_type)
 
-        self.serial_paths = self.get_parameter('serial_paths').value
-        self.baud = self.get_parameter('baud_rate').value
-        self.L = self.get_parameter('wheelbase_m').value
-        self.max_steer = self.get_parameter('max_steer_angle_deg').value
-        self.max_steer_speed = self.get_parameter('max_steer_speed_deg_s').value
-        self.publish_tf = self.get_parameter('publish_tf').value
+        self.serial_paths = list(get_required_parameter(self, 'serial_paths'))
+        self.baud = get_required_parameter(self, 'baud_rate')
+        self.L = get_required_parameter(self, 'wheelbase_m')
+        self.max_steer = get_required_parameter(self, 'max_steer_angle_deg')
+        self.max_steer_speed = get_required_parameter(self, 'max_steer_speed_deg_s')
+        self.publish_tf = get_required_parameter(self, 'publish_tf')
+        self.odom_frame = get_required_parameter(self, 'odom_frame')
+        self.base_frame = get_required_parameter(self, 'base_frame')
         self.pose_covariance_diagonal = list(
-            self.get_parameter('pose_covariance_diagonal').value)
+            get_required_parameter(self, 'pose_covariance_diagonal'))
         self.twist_covariance_diagonal = list(
-            self.get_parameter('twist_covariance_diagonal').value)
+            get_required_parameter(self, 'twist_covariance_diagonal'))
 
-        try:
-            pkg_share = get_package_share_directory('robotaksi_interface')
-            config_path = os.path.join(pkg_share, 'config', 'vehicle_params.yaml')
-            if os.path.exists(config_path):
-                with open(config_path, 'r') as f:
-                    config = yaml.safe_load(f)
-                    bridge_params = config.get('bridge_node', {}).get('ros__parameters', {})
-                    if 'serial_paths' in bridge_params and self.serial_paths == ['/dev/ttyACM0']:
-                        self.serial_paths = bridge_params['serial_paths']
-                    if 'baud_rate' in bridge_params and self.baud == 1000000:
-                        self.baud = bridge_params['baud_rate']
-                    if 'wheelbase_m' in bridge_params and self.L == 1.5:
-                        self.L = bridge_params['wheelbase_m']
-                    if 'max_steer_angle_deg' in bridge_params and self.max_steer == 35.0:
-                        self.max_steer = bridge_params['max_steer_angle_deg']
-                    if 'max_steer_speed_deg_s' in bridge_params and self.max_steer_speed == 20.0:
-                        self.max_steer_speed = bridge_params['max_steer_speed_deg_s']
-                    if 'publish_tf' in bridge_params:
-                        self.publish_tf = bridge_params['publish_tf']
-        except Exception as e:
-            self.get_logger().warn(f"Could not load fallback config: {e}")
-
-        if isinstance(self.serial_paths, str):
-            self.serial_paths = [self.serial_paths]
-            
-        # DOCKER HOTPLUG FIX: udev sometimes fails to map /dev/serial/by-id/ inside the container.
-        # We append direct device paths as ultimate fallbacks.
-        fallback_paths = ['/dev/ttyACM0', '/dev/ttyACM1', '/dev/ttyUSB0', '/dev/ttyUSB1']
-        for fp in fallback_paths:
-            if fp not in self.serial_paths:
-                self.serial_paths.append(fp)
+        # DOCKER HOTPLUG FIX: udev bazen /dev/serial/by-id/ eslemesini
+        # konteyner icinde kuramiyor, o yuzden dogrudan cihaz yollari en sona
+        # eklenir. Liste de config'ten geliyor.
+        for fallback_path in get_required_parameter(self, 'serial_fallback_paths'):
+            if fallback_path not in self.serial_paths:
+                self.serial_paths.append(fallback_path)
 
         self.crc_maxim = crcmod.predefined.mkCrcFun('crc-8-maxim')
         self.board_ready = False
@@ -272,8 +274,8 @@ class BridgeNode(Node):
                     # Broadcast TF only when explicitly enabled. Localization owns odom->base.
                     t = TransformStamped()
                     t.header.stamp = now.to_msg()
-                    t.header.frame_id = 'odom'
-                    t.child_frame_id = 'base_link'
+                    t.header.frame_id = self.odom_frame
+                    t.child_frame_id = self.base_frame
                     t.transform.translation.x = self.x
                     t.transform.translation.y = self.y
                     t.transform.translation.z = 0.0
@@ -283,8 +285,8 @@ class BridgeNode(Node):
                 # Publish Odometry message
                 odom = Odometry()
                 odom.header.stamp = now.to_msg()
-                odom.header.frame_id = 'odom'
-                odom.child_frame_id = 'base_link'
+                odom.header.frame_id = self.odom_frame
+                odom.child_frame_id = self.base_frame
                 odom.pose.pose.position.x = self.x
                 odom.pose.pose.position.y = self.y
                 odom.pose.pose.position.z = 0.0
@@ -300,7 +302,8 @@ class BridgeNode(Node):
                 # integration of wheel speed and steering angle, so their real
                 # uncertainty grows with distance and no fixed number is
                 # honest. The EKF is configured to fuse only twist.linear.x
-                # from this message (see ekf.yaml odom0_config), which is the
+                # from this message (see robotaksi_localization.yaml, odom1_config),
+                # which is the
                 # part wheel odometry actually measures; the pose values ride
                 # along for anything else that subscribes.
                 for i, var in enumerate(self.pose_covariance_diagonal):

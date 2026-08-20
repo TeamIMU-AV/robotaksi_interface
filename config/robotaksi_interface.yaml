@@ -1,0 +1,62 @@
+# robotaksi_interface parameters.
+#
+# The vehicle's physical measurements are NOT here. wheelbase_m, track_width_m,
+# max_steer_angle_deg and max_steer_speed_deg_s live in
+# robotaksi_bringup/config/vehicle_params.yaml because cmd_vel_mux and
+# joystick_teleop drive the same car and must read the same numbers. Only the
+# things that belong to the serial bridge itself are below.
+
+robotaksi_interface_launch:
+  ros__parameters:
+    # bridge_node yayinladigi TF'in atildigi cop topic'i.
+    #
+    # Tekerlek odometrisi odom -> base_link basiyordu ve bunu localization'in
+    # odom -> base_footprint'i ile cakistiriyordu. odom -> base'in tek sahibi
+    # localization; bu remap onu boyle tutuyor. publish_tf: false ile ayni
+    # sonucu verir ama ikisi birden ucuz bir emniyet kemeri.
+    tf_sink_topic: /bridge/tf_disabled
+
+
+bridge_node:
+  ros__parameters:
+    # Farkli kartlar takildiginda otomatik bulmasi icin tum ID'leri
+    # listeleyebilirsiniz. Sirayla denenir, ilk acilan kullanilir.
+    serial_paths: [
+      "/dev/serial/by-id/usb-Arduino_LLC__www.arduino.cc__Genuino_Mega_2560_55639303534351F03101-if00", # Benim Evdeki Emektar
+      "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0",                                               # Labdan Bir Klon
+      "/dev/serial/by-id/usb-Arduino__www.arduino.cc__0042_55130303335351A07022-if00"                   # Yesil Ledli Bold Yazili Mega
+    ]
+
+    # DOCKER HOTPLUG FIX: udev bazen /dev/serial/by-id/ eslemesini konteyner
+    # icinde kuramiyor. Yukaridakilerin hicbiri acilmazsa bunlar denenir.
+    # Kodda gomulu duruyordu; kart degistiginde duzenlenmesi gereken yer
+    # burasi, o yuzden config'e alindi.
+    serial_fallback_paths: ["/dev/ttyACM0", "/dev/ttyACM1", "/dev/ttyUSB0", "/dev/ttyUSB1"]
+
+    baud_rate: 1000000
+
+    # Frame the wheel odometry message is stamped with.
+    #
+    # base_link, NOT the base_frame in global_params.yaml (base_footprint).
+    # This is deliberate and is why it is written here instead of being taken
+    # from the global config: the bridge reports the chassis link, while
+    # localization publishes odom -> base_footprint. The two differ by a fixed
+    # z offset only, and the EKF fuses just vx from this message (odom1 in
+    # robotaksi_localization.yaml), so the distinction never reaches the
+    # filter -- but the message should still say what it means.
+    base_frame: base_link
+
+    # Wheel odometry stays a topic; localization owns the odom -> base
+    # transform. Kept together with the tf_sink_topic remap above.
+    publish_tf: false
+
+    # Diagonal of the Odometry covariance, [x, y, z, roll, pitch, yaw].
+    # Pose is loose because this pose is dead-reckoned and drifts without
+    # bound; the unused axes (z, roll, pitch) are large so nothing is
+    # tempted to fuse them out of a planar model.
+    pose_covariance_diagonal: [0.5, 0.5, 1000000.0, 1000000.0, 1000000.0, 0.2]
+
+    # Twist is the trustworthy half: linear.x comes from the wheel speed
+    # measurement. 0.01 m^2/s^2 is one sigma of 0.1 m/s, which matches the
+    # Xsens odometry twist covariance already in use.
+    twist_covariance_diagonal: [0.01, 1000000.0, 1000000.0, 1000000.0, 1000000.0, 0.05]
